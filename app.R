@@ -232,7 +232,7 @@ server <- function(input, output, session) {
     req(user_data())
     u_df <- user_data()
 
-    plot_start <- floor_date(input$anchor_date - 120, "month")
+    plot_start <- floor_date(input$anchor_date - 180, "month")
     plot_end <- ceiling_date(input$anchor_date + 240, "month") - days(1)
 
     window_range <- seq.Date(
