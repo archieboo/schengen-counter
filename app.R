@@ -4,6 +4,17 @@ library(lubridate)
 library(ggplot2)
 library(purrr)
 
+# Helper function to create the initial dummy data
+create_dummy_data <- function() {
+  data.frame(
+    who = "Sample User",
+    entry_date = Sys.Date(),
+    exit_date = Sys.Date(),
+    trip = "Sample Trip",
+    stringsAsFactors = FALSE
+  )
+}
+
 ui <- fluidPage(
   tags$head(
     tags$style(HTML(
@@ -11,17 +22,24 @@ ui <- fluidPage(
       #trip_summary_table { font-size: 12px; }
       .well { padding: 10px; }
       #status_text { margin-bottom: 10px; }
+      .csv-example { font-family: monospace; font-size: 10px; background: #eee; padding: 5px; border-radius: 3px; }
     "
     ))
   ),
   titlePanel("Schengen 90/180: Private Trip Manager"),
   sidebarLayout(
     sidebarPanel(
-      # 1. NEW: Upload Section (Replaces auto-load)
+      # 1. Upload Section
       wellPanel(
         h4("0. Load Data"),
-        fileInput("upload_csv", "Upload travel-history.csv", accept = ".csv"),
-        helpText("Data is only stored in memory for this session.")
+        fileInput("upload_csv", "Upload Any CSV File", accept = ".csv"),
+        helpText("Required CSV Format (Header names must match):"),
+        div(
+          class = "csv-example",
+          "who,entry_date,exit_date,trip",
+          br(),
+          "John,2023-05-01,2023-05-15,Italy Vacay"
+        )
       ),
 
       wellPanel(
@@ -45,7 +63,6 @@ ui <- fluidPage(
           class = "btn-primary",
           style = "width:100%"
         ),
-        # Added a download button so user can save changes back to their PC
         downloadButton(
           "download_csv",
           "Save/Export CSV",
@@ -80,23 +97,28 @@ ui <- fluidPage(
 )
 
 server <- function(input, output, session) {
-  # Reactive storage
+  # Initialize with dummy data so the app isn't blank on startup
   vals <- reactiveValues(
-    df = data.frame(
-      who = character(),
-      entry_date = as.Date(character()),
-      exit_date = as.Date(character()),
-      trip = character(),
-      stringsAsFactors = FALSE
-    )
+    df = create_dummy_data()
   )
 
-  # 2. Logic to handle the file upload
+  # Logic to handle the file upload (any .csv suffix works)
   observeEvent(input$upload_csv, {
+    req(input$upload_csv)
     df_uploaded <- read.csv(input$upload_csv$datapath, stringsAsFactors = FALSE)
-    df_uploaded$entry_date <- as.Date(df_uploaded$entry_date)
-    df_uploaded$exit_date <- as.Date(df_uploaded$exit_date)
-    vals$df <- df_uploaded
+
+    # Simple validation to ensure columns exist
+    required_cols <- c("who", "entry_date", "exit_date", "trip")
+    if (all(required_cols %in% names(df_uploaded))) {
+      df_uploaded$entry_date <- as.Date(df_uploaded$entry_date)
+      df_uploaded$exit_date <- as.Date(df_uploaded$exit_date)
+      vals$df <- df_uploaded
+    } else {
+      showNotification(
+        "Invalid CSV format. Please match the example.",
+        type = "error"
+      )
+    }
   })
 
   # Update User Dropdown
@@ -107,7 +129,11 @@ server <- function(input, output, session) {
       session,
       "selected_user",
       choices = users,
-      selected = input$selected_user
+      selected = if (input$selected_user %in% users) {
+        input$selected_user
+      } else {
+        users[1]
+      }
     )
     if (input$new_who == "" && length(users) > 0) {
       updateTextInput(session, "new_who", value = users[1])
@@ -127,7 +153,7 @@ server <- function(input, output, session) {
     vals$df <- bind_rows(vals$df, new_row)
   })
 
-  # Remove Trip
+  # Update the list of trips available for removal
   observe({
     req(input$selected_user, vals$df)
     user_trips <- vals$df %>%
@@ -136,6 +162,7 @@ server <- function(input, output, session) {
     updateSelectInput(session, "remove_trip_select", choices = user_trips$label)
   })
 
+  # Remove Trip
   observeEvent(input$remove_trip_btn, {
     req(input$remove_trip_select)
     target_label <- input$remove_trip_select
@@ -145,7 +172,7 @@ server <- function(input, output, session) {
       select(-label)
   })
 
-  # 3. Handle data saving (since we can't write to server CSV)
+  # Export Data
   output$download_csv <- downloadHandler(
     filename = function() {
       paste("travel-history-", Sys.Date(), ".csv", sep = "")
@@ -155,8 +182,9 @@ server <- function(input, output, session) {
     }
   )
 
+  # Reactive sequence of dates for the selected user
   user_data <- reactive({
-    req(input$selected_user, nrow(vals$df) > 0)
+    req(input$selected_user)
     df_u <- vals$df %>% filter(who == input$selected_user)
     if (nrow(df_u) == 0) {
       return(NULL)
@@ -204,8 +232,9 @@ server <- function(input, output, session) {
     req(user_data())
     u_df <- user_data()
 
-    plot_start <- floor_date(input$anchor_date - 180, "month")
-    plot_end <- ceiling_date(input$anchor_date + 200, "month") - days(1)
+    plot_start <- floor_date(input$anchor_date - 120, "month")
+    plot_end <- ceiling_date(input$anchor_date + 240, "month") - days(1)
+
     window_range <- seq.Date(
       input$anchor_date - 179,
       input$anchor_date,
@@ -232,20 +261,23 @@ server <- function(input, output, session) {
         month_label = format(date, "%B %Y"),
         month_ord = floor_date(date, "month"),
         wday = wday(date, label = TRUE, week_start = 1),
-        week_idx = dense_rank(as.integer(format(date, "%W")))
+        week_idx = as.integer(format(date, "%W"))
       ) %>%
       group_by(month_ord) %>%
       mutate(week_in_month = dense_rank(week_idx))
 
+    # Color logic
     unique_st <- unique(df_plot$status)
-    ok_trips <- sort(unique_st[grep("OK: ", unique_st)])
-    over_trips <- sort(unique_st[grep("OVERSTAY: ", unique_st)])
     cols <- c("Normal" = "#F9F9F9", "180-Day Window" = "#FFF9C4")
+
+    ok_trips <- sort(unique_st[grep("OK: ", unique_st)])
     if (length(ok_trips) > 0) {
       ok_cols <- colorRampPalette(c("#A5D6A7", "#2E7D32"))(length(ok_trips))
       names(ok_cols) <- ok_trips
       cols <- c(cols, ok_cols)
     }
+
+    over_trips <- sort(unique_st[grep("OVERSTAY: ", unique_st)])
     if (length(over_trips) > 0) {
       over_cols <- colorRampPalette(c("#EF9A9A", "#C62828"))(length(over_trips))
       names(over_cols) <- over_trips
@@ -254,12 +286,7 @@ server <- function(input, output, session) {
 
     ggplot(df_plot, aes(x = wday, y = week_in_month, fill = status)) +
       geom_tile(color = "white") +
-      geom_text(
-        aes(label = day(date)),
-        size = 5,
-        fontface = "bold",
-        alpha = 0.6
-      ) +
+      geom_text(aes(label = day(date)), size = 4, alpha = 0.5) +
       facet_wrap(~ reorder(month_label, month_ord), scales = "free", ncol = 3) +
       scale_fill_manual(values = cols) +
       scale_y_reverse() +
@@ -267,11 +294,9 @@ server <- function(input, output, session) {
       theme(
         axis.title = element_blank(),
         axis.text.y = element_blank(),
-        axis.text.x = element_text(size = 12, face = "bold"),
         strip.background = element_rect(fill = "#2c3e50"),
-        strip.text = element_text(color = "white", size = 14, face = "bold"),
-        legend.position = "bottom",
-        legend.title = element_blank()
+        strip.text = element_text(color = "white", face = "bold"),
+        legend.position = "bottom"
       )
   })
 
