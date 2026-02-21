@@ -8,7 +8,7 @@ library(purrr)
 create_dummy_data <- function() {
   data.frame(
     who = "Sample User",
-    entry_date = Sys.Date(),
+    entry_date = Sys.Date() - 5,
     exit_date = Sys.Date(),
     trip = "Sample Trip",
     stringsAsFactors = FALSE
@@ -26,19 +26,19 @@ ui <- fluidPage(
     "
     ))
   ),
-  titlePanel("Schengen 90/180: Private Trip Manager"),
+  titlePanel("Schengen 90/180 Rule Calculator"),
   sidebarLayout(
     sidebarPanel(
       # 1. Upload Section
       wellPanel(
         h4("0. Load Data"),
-        fileInput("upload_csv", "Upload Any CSV File", accept = ".csv"),
-        helpText("Required CSV Format (Header names must match):"),
+        fileInput("upload_csv", "Upload a CSV file", accept = ".csv"),
+        helpText("CSV Format (Header names must match):"),
         div(
           class = "csv-example",
           "who,entry_date,exit_date,trip",
           br(),
-          "John,2023-05-01,2023-05-15,Italy Vacay"
+          "John,2026-05-01,2026-05-15,Italy Vacay"
         )
       ),
 
@@ -253,7 +253,7 @@ server <- function(input, output, session) {
           ),
           !is.na(trip_info) ~ paste0("OK: ", trip_info),
           date %in% window_range ~ "180-Day Window",
-          TRUE ~ "Normal"
+          TRUE ~ "Non-window"
         )
       ) %>%
       ungroup() %>%
@@ -268,7 +268,7 @@ server <- function(input, output, session) {
 
     # Color logic
     unique_st <- unique(df_plot$status)
-    cols <- c("Normal" = "#F9F9F9", "180-Day Window" = "#FFF9C4")
+    cols <- c("Non-window" = "#F9F9F9", "180-Day Window" = "#FFF9C4")
 
     ok_trips <- sort(unique_st[grep("OK: ", unique_st)])
     if (length(ok_trips) > 0) {
@@ -286,17 +286,24 @@ server <- function(input, output, session) {
 
     ggplot(df_plot, aes(x = wday, y = week_in_month, fill = status)) +
       geom_tile(color = "white") +
-      geom_text(aes(label = day(date)), size = 4, alpha = 0.5) +
+      geom_text(
+        aes(label = day(date)),
+        size = 5,
+        fontface = "bold",
+        alpha = 0.5
+      ) +
       facet_wrap(~ reorder(month_label, month_ord), scales = "free", ncol = 3) +
-      scale_fill_manual(values = cols) +
+      scale_fill_manual(values = cols, name = NULL) +
       scale_y_reverse() +
       theme_minimal() +
       theme(
         axis.title = element_blank(),
         axis.text.y = element_blank(),
         strip.background = element_rect(fill = "#2c3e50"),
-        strip.text = element_text(color = "white", face = "bold"),
-        legend.position = "bottom"
+        strip.text = element_text(color = "white", face = "bold", size = 14),
+        legend.position = "bottom",
+        panel.grid = element_blank(),
+        legend.text = element_text(size = 12)
       )
   })
 
