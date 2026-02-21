@@ -11,6 +11,6 @@
     "href": "index.html",
     "title": "Schengen days counter",
     "section": "",
-    "text": "This is a Quarto website.\nTo learn more about Quarto websites visit https://quarto.org/docs/websites."
+    "text": "start_date &lt;- \"2020-04-01\"\nend_date &lt;- \"2020-12-31\"\n\ncustom_dates &lt;- seq(as.Date(start_date), as.Date(end_date), by = \"1 day\")\nevents &lt;- rep(NA, length(custom_dates))\n\n# Time difference\ndif &lt;- 365 - length(custom_dates)\n\nmyfills &lt;- rep(NA, length(custom_dates))\n\n# Specify the dates as in a 365 days calendar and substract the time difference\nmyfills[c(180:210) - dif] &lt;- \"Holidays\"\nmyfills[215 - dif] &lt;- \"Birthday\"\n\ncalendR(from = start_date, to = end_date,\n        special.days = myfills, special.col = 2:3, legend.pos = \"bottom\")"
   }
 ]

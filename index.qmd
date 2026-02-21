@@ -1,6 +1,30 @@
 ---
 title: "Schengen days counter"
+date: today
 ---
 
+```{r}
+#| include: false
+```
+
+```{r}
+#| label: set up
+#| include: false
+suppressMessages(library(calendR))
+suppressMessages(library(tidyverse))
+```
 
 
+
+```{r}
+#| column: screen
+#| warning: false
+start_date <- "2025-07-01"
+end_date <- "2026-12-31"
+
+
+
+calendR(from = start_date, to = end_date)
+
+
+```
