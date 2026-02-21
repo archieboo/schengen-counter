@@ -43,7 +43,8 @@ ui <- fluidPage(
       ),
 
       wellPanel(
-        h4("Current Status"),
+        h4("Days Stayed"),
+        helpText("within 180 day window from anchor date"),
         htmlOutput("status_text")
       ),
       hr(),
