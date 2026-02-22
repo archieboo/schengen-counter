@@ -3,8 +3,11 @@ library(dplyr)
 library(lubridate)
 library(ggplot2)
 library(purrr)
+library(googlesheets4)
 
-# Helper function to create the initial dummy data
+# Tell googlesheets4 we don't need to log in (for public sheets)
+gs4_deauth()
+
 create_dummy_data <- function() {
   data.frame(
     who = "Sample User",
@@ -29,11 +32,21 @@ ui <- fluidPage(
   titlePanel("Schengen 90/180 Rule Calculator"),
   sidebarLayout(
     sidebarPanel(
-      # 1. Upload Section
+      # --- Modified Upload Section ---
       wellPanel(
         h4("0. Load Data"),
         fileInput("upload_csv", "Upload a CSV file", accept = ".csv"),
-        helpText("CSV Format (Header names must match):"),
+        hr(),
+        textInput("gs_url", "OR Paste Google Sheet Link:", ""),
+        actionButton(
+          "load_gs",
+          "Load from Link",
+          class = "btn-info",
+          style = "width:100%"
+        ),
+        br(),
+        br(),
+        helpText("Sheet/CSV Format (Header names must match):"),
         div(
           class = "csv-example",
           "who,entry_date,exit_date,trip",
@@ -41,6 +54,7 @@ ui <- fluidPage(
           "John,2026-05-01,2026-05-15,Italy Vacay"
         )
       ),
+      # --- End Modified Section ---
 
       wellPanel(
         h4("Days Stayed"),
@@ -48,11 +62,9 @@ ui <- fluidPage(
         htmlOutput("status_text")
       ),
       hr(),
-
       selectInput("selected_user", "1. Select Person:", choices = NULL),
       dateInput("anchor_date", "2. Anchor Date:", value = Sys.Date()),
       hr(),
-
       h4("3. Add New Trip"),
       wellPanel(
         textInput("new_who", "Name:", value = ""),
@@ -71,7 +83,6 @@ ui <- fluidPage(
         )
       ),
       hr(),
-
       h4("4. Remove Trip"),
       wellPanel(
         selectInput(
@@ -86,7 +97,6 @@ ui <- fluidPage(
           style = "width:100%"
         )
       ),
-
       hr(),
       h4("Trip Summary"),
       div(style = "overflow-x: auto;", tableOutput("trip_summary_table"))
@@ -98,28 +108,47 @@ ui <- fluidPage(
 )
 
 server <- function(input, output, session) {
-  # Initialize with dummy data so the app isn't blank on startup
-  vals <- reactiveValues(
-    df = create_dummy_data()
-  )
+  vals <- reactiveValues(df = create_dummy_data())
 
-  # Logic to handle the file upload (any .csv suffix works)
-  observeEvent(input$upload_csv, {
-    req(input$upload_csv)
-    df_uploaded <- read.csv(input$upload_csv$datapath, stringsAsFactors = FALSE)
-
-    # Simple validation to ensure columns exist
+  # Shared logic to process data regardless of source
+  process_data <- function(new_df) {
     required_cols <- c("who", "entry_date", "exit_date", "trip")
-    if (all(required_cols %in% names(df_uploaded))) {
-      df_uploaded$entry_date <- as.Date(df_uploaded$entry_date)
-      df_uploaded$exit_date <- as.Date(df_uploaded$exit_date)
-      vals$df <- df_uploaded
+    if (all(required_cols %in% names(new_df))) {
+      new_df$entry_date <- as.Date(new_df$entry_date)
+      new_df$exit_date <- as.Date(new_df$exit_date)
+      vals$df <- as.data.frame(new_df)
+      showNotification("Data loaded successfully!", type = "message")
     } else {
       showNotification(
-        "Invalid CSV format. Please match the example.",
+        "Invalid format. Columns must be: who, entry_date, exit_date, trip",
         type = "error"
       )
     }
+  }
+
+  # 1. Handle CSV Upload
+  observeEvent(input$upload_csv, {
+    req(input$upload_csv)
+    df_uploaded <- read.csv(input$upload_csv$datapath, stringsAsFactors = FALSE)
+    process_data(df_uploaded)
+  })
+
+  # 2. Handle Google Sheets Link
+  observeEvent(input$load_gs, {
+    req(input$gs_url)
+    tryCatch(
+      {
+        # read_sheet works with the full URL or the ID
+        df_gs <- read_sheet(input$gs_url)
+        process_data(df_gs)
+      },
+      error = function(e) {
+        showNotification(
+          paste("Error reading Google Sheet. Ensure it's public."),
+          type = "error"
+        )
+      }
+    )
   })
 
   # Update User Dropdown
@@ -154,7 +183,7 @@ server <- function(input, output, session) {
     vals$df <- bind_rows(vals$df, new_row)
   })
 
-  # Update the list of trips available for removal
+  # Update Trip removal list
   observe({
     req(input$selected_user, vals$df)
     user_trips <- vals$df %>%
@@ -232,10 +261,8 @@ server <- function(input, output, session) {
   output$calendar_plot <- renderPlot({
     req(user_data())
     u_df <- user_data()
-
     plot_start <- floor_date(input$anchor_date - 180, "month")
     plot_end <- ceiling_date(input$anchor_date + 240, "month") - days(1)
-
     window_range <- seq.Date(
       input$anchor_date - 179,
       input$anchor_date,
@@ -267,17 +294,14 @@ server <- function(input, output, session) {
       group_by(month_ord) %>%
       mutate(week_in_month = dense_rank(week_idx))
 
-    # Color logic
     unique_st <- unique(df_plot$status)
     cols <- c("Non-window" = "#F9F9F9", "180-Day Window" = "#FFF9C4")
-
     ok_trips <- sort(unique_st[grep("OK: ", unique_st)])
     if (length(ok_trips) > 0) {
       ok_cols <- colorRampPalette(c("#A5D6A7", "#2E7D32"))(length(ok_trips))
       names(ok_cols) <- ok_trips
       cols <- c(cols, ok_cols)
     }
-
     over_trips <- sort(unique_st[grep("OVERSTAY: ", unique_st)])
     if (length(over_trips) > 0) {
       over_cols <- colorRampPalette(c("#EF9A9A", "#C62828"))(length(over_trips))
